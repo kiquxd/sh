@@ -5,29 +5,46 @@
 #include <sys/wait.h>
 #include <stdbool.h>
 
-size_t parse(char* arr, char** dst) {
+void free_tokens(char** tokens, size_t size) {
+    for (size_t i = 0; i < size; ++i) {
+        if (tokens[i] != NULL) {
+            free(tokens[i]);
+            tokens[i] = NULL;
+        }
+    }
+}
+
+size_t parse(char* arr, char** dst, size_t max_tokens) {
     const char* home = getenv("HOME");
+    if (home == NULL) {
+        home = "";
+    }
     size_t osz = 0;
-    char* token = strtok(arr, " ");
-    while (token != NULL) {
-        // printf("%s %ld\n", token, strlen(token));
+    char* token = strtok(arr, " \t\r\n");
+    while (token != NULL && osz < max_tokens - 1) {
         size_t alloc_size = strlen(token);
         bool has_home = false;
-        if (token[0] == '~') {
+        
+        if (token[0] == '~' && (token[1] == '\0' || token[1] == '/')) {
             alloc_size += strlen(home) - 1;
             has_home = true;
         }
+        
         dst[osz] = (char*)malloc(alloc_size + 1);
-        // printf("allocated\n");
+        if (dst[osz] == NULL) {
+            perror("malloc failed");
+            exit(EXIT_FAILURE);
+        }
+        
         size_t offset = 0;
         if (has_home) {
             memcpy(dst[osz], home, strlen(home));
             offset = strlen(home);
         }
-        memcpy(dst[osz] + offset, token + (offset == 0 ? 0 : 1), strlen(token) - (offset == 0 ? 0 : 1));
-        // printf("copied\n");
+        
+        memcpy(dst[osz] + offset, token + (has_home ? 1 : 0), strlen(token) - (has_home ? 1 : 0));
         dst[osz++][alloc_size] = '\0';
-        token = strtok(NULL, " ");
+        token = strtok(NULL, " \t\r\n");
     }
     dst[osz] = NULL;
     return osz;
@@ -36,21 +53,27 @@ size_t parse(char* arr, char** dst) {
 #define PIPE_FORK_ERR -1
 
 int run(char** tokens, size_t size) {
-    // simple shell without |, >/>>
+    if (size == 0 || tokens == NULL || tokens[0] == NULL) {
+        return 0;
+    }
+
     ssize_t pipe_idx = -1;
     for (size_t i = 0; i < size; ++i) {
-        if (!strcmp(tokens[i], "|") && strlen(tokens[i]) == 1) {
+        if (tokens[i] != NULL && strcmp(tokens[i], "|") == 0) {
             pipe_idx = i;
             break;
         }
     }
+    
     if (pipe_idx != -1) {
+        free(tokens[pipe_idx]);
         tokens[pipe_idx] = NULL;
+        
         char** left = tokens;
         char** right = &tokens[pipe_idx + 1];
         int fd[2];
         if (pipe(fd) == -1) {
-            perror("pipe failed\n");
+            perror("pipe failed");
             return PIPE_FORK_ERR;
         }
 
@@ -101,25 +124,6 @@ int run(char** tokens, size_t size) {
     }
 
     if (pid == 0) {
-        for (size_t i = 0; i < size; ++i) {
-            if (!strcmp(tokens[i], "|") && strlen(tokens[i]) == 1) {
-                int fd[2];
-                pipe(fd);
-                pid_t pid2 = fork();
-                if (pid2 == 0) {
-                    tokens[i] = NULL;
-                    dup2(STDIN_FILENO, fd[0]);
-                    execvp(tokens[0], tokens);
-                    perror("execvp failed");
-                    exit(1);
-                } else {
-                    close(fd[0]);
-                    dup2(fd[1], STDOUT_FILENO);
-                    run(&tokens[i + 1], size - i);
-                    close(fd[1]);
-                }
-            }
-        }
         execvp(tokens[0], tokens);
         perror("execvp failed");
         exit(EXIT_FAILURE);
@@ -137,7 +141,8 @@ int run(char** tokens, size_t size) {
 
 int main() {
     while (1) {
-        printf("sh> ");
+        char cwd[1024];
+        printf("sh (in %s)> ", getcwd(cwd, sizeof(cwd)));
         fflush(stdout);
 
         char buf[1024];
@@ -155,16 +160,43 @@ int main() {
             buf[len - 1] = '\0';
             --len;
         }
-        size_t token_cnt = parse(buf, out_buf);
+        size_t token_cnt = parse(buf, out_buf, 64);
         if (token_cnt == 0 || out_buf[0] == NULL) {
             continue;
         }
-        // printf("Tokens size: %ld\n", token_cnt);
-        if (!strcmp(out_buf[0], "exit")) {
+
+        if (strcmp(out_buf[0], "exit") == 0) {
+            free_tokens(out_buf, token_cnt);
             return 0;
         }
-        if (run(out_buf, token_cnt) != 0) {
-            printf("Error occured\n");
+        
+        if (strcmp(out_buf[0], "cd") == 0) {
+            char* target_dir = NULL;
+            if (token_cnt == 1) {
+                target_dir = getenv("HOME");
+                if (target_dir == NULL) {
+                    fprintf(stderr, "cd: HOME not set\n");
+                    exit(EXIT_FAILURE);
+                }
+            } else if (token_cnt == 2) {
+                target_dir = out_buf[1];
+            } else {
+                fprintf(stderr, "cd: too many arguments\n");
+            }
+
+            if (target_dir != NULL) {
+                if (chdir(target_dir) != 0) {
+                    perror("cd failed");
+                }
+            }
+            free_tokens(out_buf, token_cnt);
+            continue;
         }
+        
+        if (run(out_buf, token_cnt) != 0) {
+            printf("Error occurred\n");
+        }
+        free_tokens(out_buf, token_cnt);
     }
+    return 0;
 }
