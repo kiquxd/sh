@@ -14,14 +14,16 @@ void free_tokens(char** tokens, size_t size) {
     }
 }
 
-size_t parse(char* arr, char** dst, size_t max_tokens) {
+const size_t MAX_TOKENS = 64;
+
+size_t parse(char* arr, char** dst) {
     const char* home = getenv("HOME");
     if (home == NULL) {
         home = "";
     }
     size_t osz = 0;
     char* token = strtok(arr, " \t\r\n");
-    while (token != NULL && osz < max_tokens - 1) {
+    while (token != NULL && osz < MAX_TOKENS - 1) {
         size_t alloc_size = strlen(token);
         bool has_home = false;
         
@@ -160,7 +162,7 @@ int main() {
             buf[len - 1] = '\0';
             --len;
         }
-        size_t token_cnt = parse(buf, out_buf, 64);
+        size_t token_cnt = parse(buf, out_buf);
         if (token_cnt == 0 || out_buf[0] == NULL) {
             continue;
         }
