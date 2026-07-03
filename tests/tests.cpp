@@ -7,6 +7,7 @@
 #include <regex>
 #include <iostream>
 #include <stdexcept>
+#include <stdlib.h>
 
 struct ProcessResult {
     std::string stdout_data;
@@ -87,6 +88,18 @@ std::string clean_shell_output(const std::string& output) {
     return std::regex_replace(output, prompt_regex, "");
 }
 
+std::vector<std::string> extract_prompts(const std::string& output) {
+    std::vector<std::string> paths;
+    std::regex prompt_regex(R"(sh \(in ([^\)]+)\)> )");
+    auto words_begin = std::sregex_iterator(output.begin(), output.end(), prompt_regex);
+    auto words_end = std::sregex_iterator();
+    for (std::sregex_iterator i = words_begin; i != words_end; ++i) {
+        std::smatch match = *i;
+        paths.push_back(match[1].str());
+    }
+    return paths;
+}
+
 TEST_CASE("Shell Integration Tests", "[shell]") {
     std::string my_shell = MYSHELL_PATH;
 
@@ -129,5 +142,36 @@ TEST_CASE("Shell Integration Tests", "[shell]") {
         auto res_myshell = run_cmd(my_shell, {}, "nonexistentcommand123\nexit\n");
         
         REQUIRE_THAT(res_myshell.stdout_data, Catch::Matchers::ContainsSubstring("Error occurred"));
+    }
+
+    SECTION("Test 7: Verification of CWD in prompt after navigation") {
+        char current_dir[1024];
+        REQUIRE(getcwd(current_dir, sizeof(current_dir)) != nullptr);
+        std::string start_dir(current_dir);
+
+        auto res = run_cmd(my_shell, {}, "cd /tmp\nexit\n");
+        auto prompts = extract_prompts(res.stdout_data);
+
+        REQUIRE(prompts.size() >= 2);
+        CHECK(prompts[0] == start_dir);
+
+        char resolved_tmp[1024];
+        if (realpath("/tmp", resolved_tmp) != nullptr) {
+            CHECK(prompts[1] == std::string(resolved_tmp));
+        } else {
+            CHECK(prompts[1] == "/tmp");
+        }
+    }
+
+    SECTION("Test 8: Verification of CWD in prompt after home expansion") {
+        const char* home_env = getenv("HOME");
+        if (home_env != nullptr) {
+            std::string home_dir(home_env);
+            auto res = run_cmd(my_shell, {}, "cd ~\nexit\n");
+            auto prompts = extract_prompts(res.stdout_data);
+
+            REQUIRE(prompts.size() >= 2);
+            CHECK(prompts[1] == home_dir);
+        }
     }
 }

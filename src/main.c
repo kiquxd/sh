@@ -16,13 +16,13 @@ void free_tokens(char** tokens, size_t size) {
 
 const size_t MAX_TOKENS = 64;
 
-size_t parse(char* arr, char** dst) {
+size_t parse(char* prompt, char** dst) {
     const char* home = getenv("HOME");
     if (home == NULL) {
         home = "";
     }
     size_t osz = 0;
-    char* token = strtok(arr, " \t\r\n");
+    char* token = strtok(prompt, " \t\r\n");
     while (token != NULL && osz < MAX_TOKENS - 1) {
         size_t alloc_size = strlen(token);
         bool has_home = false;
@@ -166,19 +166,22 @@ int main() {
         if (token_cnt == 0 || out_buf[0] == NULL) {
             continue;
         }
-
-        if (strcmp(out_buf[0], "exit") == 0) {
+        
+        const char* exit_cmd = "exit";
+        if (strlen(out_buf[0]) == strlen(exit_cmd) && strncmp(out_buf[0], exit_cmd, strlen(exit_cmd) + 1) == 0) {
             free_tokens(out_buf, token_cnt);
             return 0;
         }
-        
-        if (strcmp(out_buf[0], "cd") == 0) {
+
+        const char* cd_cmd = "cd";
+        if (strlen(out_buf[0]) == strlen(cd_cmd) && strncmp(out_buf[0], cd_cmd, strlen(cd_cmd) + 1) == 0) {
             char* target_dir = NULL;
             if (token_cnt == 1) {
                 target_dir = getenv("HOME");
                 if (target_dir == NULL) {
                     fprintf(stderr, "cd: HOME not set\n");
-                    exit(EXIT_FAILURE);
+                    free_tokens(out_buf, token_cnt);
+                    continue;
                 }
             } else if (token_cnt == 2) {
                 target_dir = out_buf[1];

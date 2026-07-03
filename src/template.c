@@ -1,8 +1,13 @@
 #include <stdio.h>
+#include <string.h>
 
 const size_t MAX_TOKENS = 64;
 
-size_t parse(char* arr, char** dst) {
+void free_tokens(char** tokens, size_t size) {
+    return;
+}
+
+size_t parse(char* prompt, char** dst) {
     return 0;
 }
 
@@ -21,12 +26,14 @@ int main() {
         char buf[1024];
         char* out_buf[64];
 
-        if (strcmp(out_buf[0], "exit") == 0) {
+        const char* exit_cmd = "exit";
+        if (strlen(out_buf[0]) == strlen(exit_cmd) && strncmp(out_buf[0], exit_cmd, strlen(exit_cmd) + 1) == 0) {
             // TODO
             return 0;
         }
         
-        if (strcmp(out_buf[0], "cd") == 0) {
+        const char* cd_cmd = "cd";
+        if (strlen(out_buf[0]) == strlen(cd_cmd) && strncmp(out_buf[0], cd_cmd, strlen(cd_cmd) + 1) == 0) {
             // TODO
             continue;
         }
