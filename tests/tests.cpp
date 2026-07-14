@@ -8,6 +8,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <stdlib.h>
+#include <algorithm> // Для std::remove
 
 struct ProcessResult {
     std::string stdout_data;
@@ -98,6 +99,13 @@ std::vector<std::string> extract_prompts(const std::string& output) {
         paths.push_back(match[1].str());
     }
     return paths;
+}
+
+std::string trim_and_normalize(const std::string& s) {
+    std::string res = s;
+    res.erase(0, res.find_first_not_of(" \t\n\r"));
+    res.erase(res.find_last_not_of(" \t\n\r") + 1);
+    return res;
 }
 
 TEST_CASE("Shell Integration Tests", "[shell]") {
@@ -212,5 +220,147 @@ TEST_CASE("Shell Integration Tests", "[shell]") {
         auto res_bash = run_cmd("bash", {"--noprofile", "--norc"}, "echo $\nexit\n");
 
         REQUIRE(clean_shell_output(res_myshell.stdout_data) == res_bash.stdout_data);
+    }
+
+    SECTION("Test 14: Multiple variables in one token") {
+        setenv("VAR_A", "Hello", 1);
+        setenv("VAR_B", "World", 1);
+        
+        auto res_myshell = run_cmd(my_shell, {}, "echo $VAR_A-$VAR_B\nexit\n");
+        auto res_bash = run_cmd("bash", {"--noprofile", "--norc"}, "echo $VAR_A-$VAR_B\nexit\n");
+
+        REQUIRE(clean_shell_output(res_myshell.stdout_data) == res_bash.stdout_data);
+        
+        unsetenv("VAR_A");
+        unsetenv("VAR_B");
+    }
+
+    SECTION("Test 15: Variable followed by special characters (! and .)") {
+        const char* home = getenv("HOME");
+        if (home != nullptr) {
+            std::string home_str(home);
+            
+            auto res_myshell_1 = run_cmd(my_shell, {}, "echo $HOME!\nexit\n");
+            auto res_bash_1 = run_cmd("bash", {"--noprofile", "--norc"}, "echo $HOME!\nexit\n");
+            REQUIRE(clean_shell_output(res_myshell_1.stdout_data) == res_bash_1.stdout_data);
+
+            auto res_myshell_2 = run_cmd(my_shell, {}, "echo $HOME.txt\nexit\n");
+            auto res_bash_2 = run_cmd("bash", {"--noprofile", "--norc"}, "echo $HOME.txt\nexit\n");
+            REQUIRE(clean_shell_output(res_myshell_2.stdout_data) == res_bash_2.stdout_data);
+        }
+    }
+
+    SECTION("Test 16: cd with too many arguments") {
+        auto res = run_cmd(my_shell, {}, "cd /tmp /var\nexit\n");
+        
+        REQUIRE_THAT(res.stderr_data, Catch::Matchers::ContainsSubstring("too many arguments"));
+        REQUIRE(res.exit_code == 1);
+    }
+
+    SECTION("Test 17: Pipe exit code (false | true)") {
+        auto res = run_cmd(my_shell, {}, "false | true\nexit\n");
+        
+        REQUIRE(res.exit_code == 0);
+    }
+
+    SECTION("Test 18: Pipe with builtin on left (cd | pwd)") {
+        char current_dir[1024];
+        REQUIRE(getcwd(current_dir, sizeof(current_dir)) != nullptr);
+        std::string start_dir(current_dir);
+
+        auto res = run_cmd(my_shell, {}, "cd /tmp | pwd\nexit\n");
+        
+        std::string output = clean_shell_output(res.stdout_data);
+        output.erase(std::remove(output.begin(), output.end(), '\n'), output.end());
+        output.erase(std::remove(output.begin(), output.end(), '\r'), output.end());
+        
+        CHECK(output == start_dir);
+    }
+
+    SECTION("Test 19: Extra whitespace handling") {
+        auto res_myshell = run_cmd(my_shell, {}, "echo    hello      world\nexit\n");
+        auto res_bash = run_cmd("bash", {"--noprofile", "--norc"}, "echo    hello      world\nexit\n");
+
+        REQUIRE(clean_shell_output(res_myshell.stdout_data) == res_bash.stdout_data);
+    }
+
+    SECTION("Test 20: Tilde expansion with user (negative test)") {
+        auto res = run_cmd(my_shell, {}, "echo ~root\nexit\n");
+        
+        std::string out = clean_shell_output(res.stdout_data);
+        REQUIRE_THAT(out, Catch::Matchers::ContainsSubstring("~root")); 
+    }
+
+    SECTION("Test 21: Tab separators instead of spaces") {
+        std::string input = "echo\thello\tworld\nexit\n";
+        
+        auto res_myshell = run_cmd(my_shell, {}, input);
+        auto res_bash = run_cmd("bash", {"--noprofile", "--norc"}, input);
+
+        REQUIRE(clean_shell_output(res_myshell.stdout_data) == res_bash.stdout_data);
+    }
+
+    SECTION("Test 22: Mixed separators (spaces, tabs, newlines in input stream)") {
+        std::string input = "echo \t hello \t world\nexit\n";
+        
+        auto res_myshell = run_cmd(my_shell, {}, input);
+        auto res_bash = run_cmd("bash", {"--noprofile", "--norc"}, input);
+
+        REQUIRE(clean_shell_output(res_myshell.stdout_data) == res_bash.stdout_data);
+    }
+
+    SECTION("Test 23: Invalid variable names (hyphens and dots)") {
+        setenv("VALID_VAR", "REPLACED", 1);
+        
+        auto res_myshell = run_cmd(my_shell, {}, "echo $VALID_VAR-name\nexit\n");
+        auto res_bash = run_cmd("bash", {"--noprofile", "--norc"}, "echo $VALID_VAR-name\nexit\n");
+
+        REQUIRE(clean_shell_output(res_myshell.stdout_data) == res_bash.stdout_data);
+
+        auto res_myshell2 = run_cmd(my_shell, {}, "echo $VALID_VAR.txt\nexit\n");
+        auto res_bash2 = run_cmd("bash", {"--noprofile", "--norc"}, "echo $VALID_VAR.txt\nexit\n");
+
+        REQUIRE(clean_shell_output(res_myshell2.stdout_data) == res_bash2.stdout_data);
+        
+        unsetenv("VALID_VAR");
+    }
+
+    SECTION("Test 24: Export with spaces around equals sign") {
+        auto res = run_cmd(my_shell, {}, "export VAR = value\nexit\n");
+        
+        REQUIRE_THAT(res.stderr_data, Catch::Matchers::ContainsSubstring("too many arguments"));
+        REQUIRE(res.exit_code == 1);
+        
+        auto check_res = run_cmd(my_shell, {}, "echo $VAR\nexit\n");
+        std::string out = clean_shell_output(check_res.stdout_data);
+        out.erase(std::remove(out.begin(), out.end(), '\n'), out.end());
+        
+        REQUIRE(out == "");
+    }
+
+    SECTION("Test 25: Multiple dollar signs in a row") {
+        setenv("D_VAR", "X", 1);
+
+        auto res1_myshell = run_cmd(my_shell, {}, "echo $$D_VAR\nexit\n");
+        auto res1_bash = run_cmd("bash", {"--noprofile", "--norc"}, "echo $$D_VAR\nexit\n");
+        
+        std::string out1 = clean_shell_output(res1_myshell.stdout_data);
+        REQUIRE_THAT(out1, Catch::Matchers::ContainsSubstring("$")); 
+        REQUIRE_THAT(out1, Catch::Matchers::ContainsSubstring("X"));
+
+        auto res2_myshell = run_cmd(my_shell, {}, "echo $ $D_VAR\nexit\n");
+        std::string out2 = clean_shell_output(res2_myshell.stdout_data);
+        REQUIRE_THAT(out2, Catch::Matchers::ContainsSubstring("$"));
+        REQUIRE_THAT(out2, Catch::Matchers::ContainsSubstring("X"));
+
+        unsetenv("D_VAR");
+    }
+    
+    SECTION("Test 26: Dollar sign at the very end of input") {
+        auto res = run_cmd(my_shell, {}, "echo test$\nexit\n");
+        std::string out = clean_shell_output(res.stdout_data);
+        out.erase(std::remove(out.begin(), out.end(), '\n'), out.end());
+        
+        REQUIRE(out == "test$");
     }
 }
