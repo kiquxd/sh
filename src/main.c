@@ -6,6 +6,8 @@
 #include <stdbool.h>
 #include <ctype.h>
 
+int last_status = 0;
+
 void free_tokens(char** tokens, size_t size) {
     for (size_t i = 0; i < size; ++i) {
         if (tokens[i] != NULL) {
@@ -141,7 +143,11 @@ size_t parse(char* prompt, char** dst) {
 bool handle_builtin(char** tokens, size_t size, int* status) {
     const char* exit_cmd = "exit";
     if (strncmp(tokens[0], exit_cmd, strlen(exit_cmd) + 1) == 0) {
-        exit(0);
+        if (size > 1) {
+            exit(atoi(tokens[1]));
+        } else {
+            exit(last_status);
+        }
     }
     
     const char* cd_cmd = "cd";
@@ -274,6 +280,8 @@ int run(char** tokens, size_t size) {
 
         if (WIFEXITED(status2)) {
             return WEXITSTATUS(status2);
+        } else if (WIFSIGNALED(status2)) {
+            return 128 + WTERMSIG(status2);
         }
         return -1;
     }
@@ -332,9 +340,7 @@ int main() {
 
         expand_env(out_buf, token_cnt);
         
-        if (run(out_buf, token_cnt) != 0) {
-            fprintf(stderr, "Error occurred\n");
-        }
+        last_status = run(out_buf, token_cnt);
         free_tokens(out_buf, token_cnt);
     }
     return 0;
